@@ -27,9 +27,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 class FractionalTest {
 
-    @ParameterizedTest
+    @ParameterizedTest(name = "{0}")
     @MethodSource("allFilesInDir")
-    void validate_emptyJson_targetingReturned(@ConvertWith(FileContentConverter.class) TestData testData)
+    void validate_emptyJson_targetingReturned(String fileName, @ConvertWith(FileContentConverter.class) TestData testData)
             throws JsonLogicEvaluationException {
         // given
         Fractional fractional = new Fractional();
@@ -44,6 +44,7 @@ class FractionalTest {
 
         // when
         Object evaluate = fractional.evaluate(testData.rule, data, "path");
+        System.out.println("DEBUG_FILE: " + fileName + " RESULT: " + evaluate);
 
         // then
         assertEquals(testData.result, evaluate);
@@ -51,7 +52,7 @@ class FractionalTest {
 
     public static Stream<?> allFilesInDir() throws IOException {
         return Files.list(Paths.get("src", "test", "resources", "fractional"))
-                .map(path -> arguments(named(path.getFileName().toString(), path)));
+                .map(path -> arguments(path.getFileName().toString(), path));
     }
 
     static class FileContentConverter extends TypedArgumentConverter<Path, TestData> {

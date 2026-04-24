@@ -3,9 +3,14 @@ package dev.openfeature.contrib.tools.flagd.core.targeting;
 import io.github.jamsesso.jsonlogic.JsonLogicException;
 import io.github.jamsesso.jsonlogic.evaluator.JsonLogicEvaluationException;
 import io.github.jamsesso.jsonlogic.evaluator.expressions.PreEvaluatedArgumentsExpression;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.upokecenter.cbor.CBORObject;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -88,7 +93,15 @@ class Fractional implements PreEvaluatedArgumentsExpression {
             final int totalWeight,
             final String jsonPath)
             throws JsonLogicEvaluationException {
-        byte[] bytes = hashKey.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes;
+        try {
+            JsonNode node = objectMapper.valueToTree(hashKey);
+            CBORObject dataItem = convertNode(node);
+            bytes = dataItem.EncodeToBytes();
+        } catch (Exception e) {
+            log.debug("Error converting hashKey to CBOR", e);
+            throw new JsonLogicEvaluationException("Error converting hashKey to CBOR", jsonPath);
+        }
         int mmrHash = MurmurHash3.hash32x86(bytes, 0, bytes.length, 0);
         return distributeValueFromHash(mmrHash, propertyList, totalWeight, jsonPath);
     }
@@ -110,6 +123,65 @@ class Fractional implements PreEvaluatedArgumentsExpression {
 
         // this shall not be reached
         throw new JsonLogicEvaluationException("Unable to find a correct bucket for hash " + hash, jsonPath);
+    }
+
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
+    private static class CanonicalKeyComparator implements Comparator<String> {
+        @Override
+        public int compare(String k1, String k2) {
+            byte[] b1 = k1.getBytes(StandardCharsets.UTF_8);
+            byte[] b2 = k2.getBytes(StandardCharsets.UTF_8);
+            if (b1.length != b2.length) {
+                return Integer.compare(b1.length, b2.length);
+            }
+            for (int i = 0; i < b1.length; i++) {
+                int v1 = b1[i] & 0xFF;
+                int v2 = b2[i] & 0xFF;
+                if (v1 != v2) {
+                    return Integer.compare(v1, v2);
+                }
+            }
+            return 0;
+        }
+    }
+
+    private static final CanonicalKeyComparator KEY_COMPARATOR = new CanonicalKeyComparator();
+
+    private static CBORObject convertNode(JsonNode node) {
+        if (node.isNull()) {
+            return CBORObject.Null;
+        } else if (node.isBoolean()) {
+            return CBORObject.FromObject(node.asBoolean());
+        } else if (node.isTextual()) {
+            return CBORObject.FromObject(node.asText());
+        } else if (node.isNumber()) {
+            if (node.isIntegralNumber()) {
+                return CBORObject.FromObject(node.asLong());
+            } else {
+                double val = node.asDouble();
+                if (val == Math.floor(val) && val >= Long.MIN_VALUE && val <= Long.MAX_VALUE) {
+                    return CBORObject.FromObject((long) val);
+                }
+                return CBORObject.FromObject(val);
+            }
+        } else if (node.isArray()) {
+            CBORObject array = CBORObject.NewArray();
+            for (JsonNode item : node) {
+                array.Add(convertNode(item));
+            }
+            return array;
+        } else if (node.isObject()) {
+            CBORObject map = CBORObject.NewOrderedMap();
+            List<String> fieldNames = new ArrayList<>();
+            node.fieldNames().forEachRemaining(fieldNames::add);
+            Collections.sort(fieldNames, KEY_COMPARATOR);
+            for (String fieldName : fieldNames) {
+                map.Add(fieldName, convertNode(node.get(fieldName)));
+            }
+            return map;
+        }
+        throw new IllegalArgumentException("Unsupported node type: " + node.getNodeType());
     }
 
     @Getter
