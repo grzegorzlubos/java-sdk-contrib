@@ -31,6 +31,7 @@ class Fractional implements PreEvaluatedArgumentsExpression {
     }
 
     @Override
+    @SuppressWarnings("unchecked") // json-logic-java's PreEvaluatedArgumentsExpression uses raw List
     public Object evaluate(List arguments, Object data, String jsonPath) throws JsonLogicEvaluationException {
         if (arguments.size() < 1) {
             return null;
@@ -38,24 +39,30 @@ class Fractional implements PreEvaluatedArgumentsExpression {
 
         final Operator.FlagProperties properties = new Operator.FlagProperties(data);
 
-        Object arg1 = arguments.get(0);
-
         final Object bucketBy;
-        final Object[] distributions;
+        final List<Object> distributions;
 
-        if (arg1 instanceof String
-                || arg1 instanceof Boolean
-                || arg1 instanceof Number
-                || arg1 instanceof java.util.Map) {
-            // first arg is a primitive, use for bucketing
-            bucketBy = arg1;
-            Object[] source = arguments.toArray();
-            distributions = Arrays.copyOfRange(source, 1, source.length);
+        // json-logic pre-evaluation flattens a single-entry fractional
+        // e.g. [["single",1]] becomes ["single", 1]; detect and re-wrap
+        if (isFlattened(arguments)) {
+            if (properties.getTargetingKey() == null) {
+                log.debug("Missing fallback targeting key");
+                return null;
+            }
+            bucketBy = java.util.Arrays.asList(properties.getFlagKey(), properties.getTargetingKey());
+            distributions = List.of(arguments);
+        } else if (arguments.get(0) instanceof String
+                || arguments.get(0) instanceof Boolean
+                || arguments.get(0) instanceof Number
+                || arguments.get(0) instanceof java.util.Map) {
+            // first arg is a primitive or Map, use for bucketing
+            bucketBy = arguments.get(0);
+            distributions = arguments.subList(1, arguments.size());
         } else {
             // fallback to targeting key if present
             if (properties.getTargetingKey() == null) {
                 log.debug("Missing fallback targeting key");
-                if (arguments.size() == 2) {
+                if (arguments.size() == 2 && arguments.get(0) == null) {
                     throw new dev.openfeature.sdk.exceptions.GeneralError("Missing fallback targeting key");
                 }
                 return null;
@@ -63,12 +70,11 @@ class Fractional implements PreEvaluatedArgumentsExpression {
 
             bucketBy = java.util.Arrays.asList(properties.getFlagKey(), properties.getTargetingKey());
 
-            if (arg1 == null) {
-                // arg1 resolved to null, skip it in distributions
-                Object[] source = arguments.toArray();
-                distributions = Arrays.copyOfRange(source, 1, source.length);
+            if (arguments.get(0) == null) {
+                // arguments.get(0) resolved to null, skip it in distributions
+                distributions = arguments.subList(1, arguments.size());
             } else {
-                distributions = arguments.toArray();
+                distributions = arguments;
             }
         }
 
@@ -120,6 +126,19 @@ class Fractional implements PreEvaluatedArgumentsExpression {
         }
         int mmrHash = MurmurHash3.hash32x86(bytes, 0, bytes.length, 0);
         return distributeValueFromHash(mmrHash, propertyList, totalWeight, jsonPath);
+    }
+
+    /**
+     * Checks if arguments have been flattened by json-logic pre-evaluation.
+     * A flattened list contains no List elements (e.g. ["single", 1] instead of [["single", 1]]).
+     */
+    private static boolean isFlattened(List<?> arguments) {
+        for (Object arg : arguments) {
+            if (arg instanceof List) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static Object distributeValueFromHash(
