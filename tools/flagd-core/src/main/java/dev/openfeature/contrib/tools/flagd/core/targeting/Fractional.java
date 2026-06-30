@@ -62,10 +62,10 @@ class Fractional implements PreEvaluatedArgumentsExpression {
             // fallback to targeting key if present
             if (properties.getTargetingKey() == null) {
                 log.debug("Missing fallback targeting key");
-                if (arguments.size() == 2 && arguments.get(0) == null) {
-                    throw new dev.openfeature.sdk.exceptions.GeneralError("Missing fallback targeting key");
+                if (arguments.get(0) == null) {
+                    return null;
                 }
-                return null;
+                throw new dev.openfeature.sdk.exceptions.GeneralError("Missing fallback targeting key");
             }
 
             bucketBy = java.util.Arrays.asList(properties.getFlagKey(), properties.getTargetingKey());
