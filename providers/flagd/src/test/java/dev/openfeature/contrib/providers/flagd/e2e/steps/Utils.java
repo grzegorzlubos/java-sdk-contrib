@@ -15,7 +15,8 @@ public final class Utils {
     private Utils() {}
 
     public static Object convert(String value, String type) throws ClassNotFoundException, IOException {
-        if (Objects.equals(value, "null")) return null;
+        if ("Null".equals(type)) return null;
+        if (Objects.equals(value, "null") && !"String".equals(type)) return null;
         switch (type) {
             case "Boolean":
                 return Boolean.parseBoolean(value);

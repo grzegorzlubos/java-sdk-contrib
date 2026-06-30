@@ -22,7 +22,10 @@ public final class EvaluatorUtils {
      * @return the converted value, or {@code null} if {@code value} is "null" or empty for Object
      */
     public static Object convert(String value, String type) throws IOException {
-        if (value == null || value.equals("null")) {
+        if ("Null".equals(type)) {
+            return null;
+        }
+        if (value == null || (value.equals("null") && !"String".equals(type))) {
             return null;
         }
         switch (type) {
@@ -45,7 +48,8 @@ public final class EvaluatorUtils {
     }
 
     /**
-     * Overload of {@link #convert(String, String)} that accepts a {@link FlagType} enum.
+     * Overload of {@link #convert(String, String)} that accepts a {@link FlagType}
+     * enum.
      *
      * @param value    the string value from the Gherkin table
      * @param flagType the flag type enum constant

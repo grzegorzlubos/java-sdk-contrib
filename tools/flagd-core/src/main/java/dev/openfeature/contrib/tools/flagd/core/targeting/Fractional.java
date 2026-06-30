@@ -1,11 +1,12 @@
 package dev.openfeature.contrib.tools.flagd.core.targeting;
 
-import io.github.jamsesso.jsonlogic.JsonLogicException;
-import io.github.jamsesso.jsonlogic.evaluator.JsonLogicEvaluationException;
-import io.github.jamsesso.jsonlogic.evaluator.expressions.PreEvaluatedArgumentsExpression;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.upokecenter.cbor.CBORObject;
+import io.github.jamsesso.jsonlogic.JsonLogicException;
+import io.github.jamsesso.jsonlogic.evaluator.JsonLogicEvaluationException;
+import io.github.jamsesso.jsonlogic.evaluator.expressions.PreEvaluatedArgumentsExpression;
+import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -37,40 +38,55 @@ class Fractional implements PreEvaluatedArgumentsExpression {
 
         final Operator.FlagProperties properties = new Operator.FlagProperties(data);
 
-        // check optional string target in first arg
         Object arg1 = arguments.get(0);
 
-        final String bucketBy;
+        final Object bucketBy;
         final Object[] distributions;
 
-        if (arg1 instanceof String) {
-            // first arg is a String, use for bucketing
-            bucketBy = (String) arg1;
+        if (arg1 instanceof String
+                || arg1 instanceof Boolean
+                || arg1 instanceof Number
+                || arg1 instanceof java.util.Map) {
+            // first arg is a primitive, use for bucketing
+            bucketBy = arg1;
             Object[] source = arguments.toArray();
             distributions = Arrays.copyOfRange(source, 1, source.length);
         } else {
             // fallback to targeting key if present
             if (properties.getTargetingKey() == null) {
                 log.debug("Missing fallback targeting key");
+                if (arguments.size() == 2) {
+                    throw new dev.openfeature.sdk.exceptions.GeneralError("Missing fallback targeting key");
+                }
                 return null;
             }
 
-            bucketBy = properties.getFlagKey() + properties.getTargetingKey();
-            distributions = arguments.toArray();
+            bucketBy = java.util.Arrays.asList(properties.getFlagKey(), properties.getTargetingKey());
+
+            if (arg1 == null) {
+                // arg1 resolved to null, skip it in distributions
+                Object[] source = arguments.toArray();
+                distributions = Arrays.copyOfRange(source, 1, source.length);
+            } else {
+                distributions = arguments.toArray();
+            }
         }
 
         final List<FractionProperty> propertyList = new ArrayList<>();
         long totalWeight = 0;
 
-        try {
-            for (Object dist : distributions) {
+        for (Object dist : distributions) {
+            try {
                 FractionProperty fractionProperty = new FractionProperty(dist, jsonPath);
                 propertyList.add(fractionProperty);
                 totalWeight += fractionProperty.getWeight();
+            } catch (JsonLogicException e) {
+                if ("Property is not an array".equals(e.getMessage())) {
+                    throw new io.github.jamsesso.jsonlogic.evaluator.JsonLogicEvaluationException(
+                            "Error parsing fractional targeting rule: " + e.getMessage(), jsonPath);
+                }
+                return null;
             }
-        } catch (JsonLogicException e) {
-            log.debug("Error parsing fractional targeting rule", e);
-            return null;
         }
 
         if (totalWeight > MAX_WEIGHT) {
@@ -88,7 +104,7 @@ class Fractional implements PreEvaluatedArgumentsExpression {
     }
 
     private static Object distributeValue(
-            final String hashKey,
+            final Object hashKey,
             final List<FractionProperty> propertyList,
             final int totalWeight,
             final String jsonPath)
@@ -127,7 +143,9 @@ class Fractional implements PreEvaluatedArgumentsExpression {
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    private static class CanonicalKeyComparator implements Comparator<String> {
+    private static class CanonicalKeyComparator implements Comparator<String>, Serializable {
+        private static final long serialVersionUID = 1L;
+
         @Override
         public int compare(String k1, String k2) {
             byte[] b1 = k1.getBytes(StandardCharsets.UTF_8);
